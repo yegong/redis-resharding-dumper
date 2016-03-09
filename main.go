@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os"
 	"bufio"
 	"flag"
 	"fmt"
@@ -19,6 +20,9 @@ var (
 	masterHost string
 	slavePort  int
 	slaveHost  string
+//
+	totalCount int
+	lastCount  int
 )
 
 const (
@@ -34,7 +38,6 @@ type RedisCommand struct {
 }
 
 func SendRedisCommand(output chan<- []byte, command...interface{}) {
-    log.Printf("Build redis command: %v\n", command)
 	output <- []byte(fmt.Sprintf("*%d\r\n", len(command)))
 	for _, line := range command {
 		switch line := line.(type) {
@@ -48,6 +51,7 @@ func SendRedisCommand(output chan<- []byte, command...interface{}) {
 			output <- []byte("\r\n")
 		}
 	}
+	totalCount += 1
 }
 
 func ReadRedisCommand(reader *bufio.Reader) (*RedisCommand, error) {
@@ -138,7 +142,7 @@ func RunMasterConnection(slavechannel chan<- []byte) {
 
 	for {
 		command, err := ReadRedisCommand(reader)
-		if (len(command.command) > 0) {
+		if (command != nil && command.command != nil && len(command.command) > 0) {
 			log.Printf("Receive from master %v\n", command.command)
 		}
 		if err != nil {
@@ -174,7 +178,7 @@ func RunSlaveConnection() {
 	conn, err := net.Dial("tcp", fmt.Sprintf("%s:%d", slaveHost, slavePort))
 	if err != nil {
 		log.Printf("Failed to connect to slave: %v\n", err)
-		return
+		os.Exit(2)
 	}
 
 	defer conn.Close()
@@ -189,13 +193,10 @@ func RunSlaveConnection() {
 	reader := bufio.NewReaderSize(conn, bufSize)
 
 	for {
-		line, err := reader.ReadString('\n')
+		_, err := reader.ReadString('\n')
 		if (err != nil) {
 			log.Printf("Failed to read from slave: %v\n", err)
-			time.Sleep(1 * time.Second)
-		}
-		if (len(line) > 0) {
-			// log.Printf("Receive from slave %v\n", strings.TrimSpace(line))
+			os.Exit(2)
 		}
 	}
 }
@@ -206,8 +207,17 @@ func RunWriter(conn net.Conn, name string, channel <-chan []byte) {
 		_, err := conn.Write(data)
 		if err != nil {
 			log.Printf("Failed to write data to %v: %v\n", name, err)
-			return
+			os.Exit(2)
 		}
+	}
+}
+
+func RunStats() {
+	for {
+		time.Sleep(1 * time.Second)
+		var currentTotalCount = totalCount
+		log.Printf("QPS= %d\n", currentTotalCount - lastCount)
+		lastCount = currentTotalCount
 	}
 }
 
@@ -326,5 +336,6 @@ func main() {
 
 	log.Printf("Redis Resharding Proxy configured for Redis master at %s:%d\n", masterHost, masterPort)
 	log.Printf("Redis Resharding Proxy configured for Redis slave at %s:%d\n", slaveHost, slavePort)
+	go RunStats()
 	RunSlaveConnection()
 }
