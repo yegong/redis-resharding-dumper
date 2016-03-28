@@ -11,9 +11,12 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"net/http"
 	"github.com/cupcake/rdb"
 	"github.com/cupcake/rdb/nopdecoder"
 )
+
+import _ "net/http/pprof"
 
 var (
 	masterPort int
@@ -26,18 +29,29 @@ var (
 )
 
 const (
-	bufSize       = 16384
+	bufSize	   = 16384
 	channelBuffer = 100
 )
 
 type RedisCommand struct {
-	raw      []byte
+	raw	  []byte
 	command  []string
-	reply    string
+	reply	string
 	bulkSize int64
 }
 
 func SendRedisCommand(output chan<- []byte, command...interface{}) {
+	var buf = "SendRedisCommand "
+	for _, line := range command {
+		switch line := line.(type) {
+		case string:
+			buf += line
+		case []byte:
+			buf += string(line)
+		}
+		buf += " "
+	}
+	log.Println(buf)
 	output <- []byte(fmt.Sprintf("*%d\r\n", len(command)))
 	for _, line := range command {
 		switch line := line.(type) {
@@ -126,7 +140,7 @@ func RunMasterConnection(slavechannel chan<- []byte) {
 	conn, err := net.Dial("tcp", fmt.Sprintf("%s:%d", masterHost, masterPort))
 	if err != nil {
 		log.Printf("Failed to connect to master: %v\n", err)
-		return
+		os.Exit(2)
 	}
 
 	defer conn.Close()
@@ -222,10 +236,9 @@ func RunStats() {
 }
 
 type decoder struct {
-	output     	chan<- []byte
 	nopdecoder.NopDecoder
-    arguments   []interface{}
-    expiry      int64
+	output          chan<- []byte
+	expiry          int64
 }
 
 func (p *decoder) StartRDB() {
@@ -233,93 +246,71 @@ func (p *decoder) StartRDB() {
 }
 
 func (p *decoder) Set(key, value []byte, expiry int64) {
-	SendRedisCommand(p.output, "SET", key, value)
-    if (expiry > 0) {
-    	SendRedisCommand(p.output, "PEXPIREAT", key, strconv.FormatInt(expiry, 10))
-    }
+    //SendRedisCommand(p.output, "SET", key, value)
+	if (expiry > 0) {
+		//SendRedisCommand(p.output, "PEXPIREAT", key, strconv.FormatInt(expiry, 10))
+	}
 }
 
 func (p *decoder) StartHash(key []byte, length, expiry int64) {
-    p.arguments = make([]interface{}, 0)
-    p.arguments = append(p.arguments, "HMSET")
-    p.arguments = append(p.arguments, key)
 	p.expiry = expiry
 }
 
 func (p *decoder) Hset(key, field, value []byte) {
-    p.arguments = append(p.arguments, field)
-    p.arguments = append(p.arguments, value)
+	//SendRedisCommand(p.output, "HMSET", key, field, value)
 }
 
 func (p *decoder) EndHash(key []byte) {
-    SendRedisCommand(p.output, p.arguments...)
-    if (p.expiry > 0) {
-    	SendRedisCommand(p.output, "PEXPIREAT", key, strconv.FormatInt(p.expiry, 10))
-    }
-    p.arguments = nil
-    p.expiry = 0
+	if (p.expiry > 0) {
+		//SendRedisCommand(p.output, "PEXPIREAT", key, strconv.FormatInt(p.expiry, 10))
+		p.expiry = 0
+	}
 }
 
 func (p *decoder) StartSet(key []byte, cardinality, expiry int64) {
-    p.arguments = make([]interface{}, 0)
-    p.arguments = append(p.arguments, "SADD")
-    p.arguments = append(p.arguments, key)
 	p.expiry = expiry
 }
 
 func (p *decoder) Sadd(key, member []byte) {
-    p.arguments = append(p.arguments, member)
+	//SendRedisCommand(p.output, "SADD", key, member)
 }
 
 func (p *decoder) EndSet(key []byte) {
-    SendRedisCommand(p.output, p.arguments...)
-    if (p.expiry > 0) {
-    	SendRedisCommand(p.output, "PEXPIREAT", key, strconv.FormatInt(p.expiry, 10))
-    }
-    p.arguments = nil
-    p.expiry = 0
+	if (p.expiry > 0) {
+		//SendRedisCommand(p.output, "PEXPIREAT", key, strconv.FormatInt(p.expiry, 10))
+		p.expiry = 0
+	}
 }
 
 func (p *decoder) StartList(key []byte, length, expiry int64) {
-    p.arguments = make([]interface{}, 0)
-    p.arguments = append(p.arguments, "RPUSH")
-    p.arguments = append(p.arguments, key)
 	p.expiry = expiry
 }
 
 func (p *decoder) Rpush(key, value []byte) {
-    p.arguments = append(p.arguments, value)
+	//SendRedisCommand(p.output, "RPUSH", key, value)
 }
 
 func (p *decoder) EndList(key []byte) {
-    SendRedisCommand(p.output, p.arguments...)
-    if (p.expiry > 0) {
-    	SendRedisCommand(p.output, "PEXPIREAT", key, strconv.FormatInt(p.expiry, 10))
-    }
-    p.arguments = nil
-    p.expiry = 0
+	if (p.expiry > 0) {
+		//SendRedisCommand(p.output, "PEXPIREAT", key, strconv.FormatInt(p.expiry, 10))
+		p.expiry = 0
+	}
 }
 
 func (p *decoder) StartZSet(key []byte, cardinality, expiry int64) {
-    p.arguments = make([]interface{}, 0)
-    p.arguments = append(p.arguments, "ZADD")
-    p.arguments = append(p.arguments, key)
 	p.expiry = expiry
 }
 
 
 func (p *decoder) Zadd(key []byte, score float64, member []byte) {
-    p.arguments = append(p.arguments, strconv.FormatFloat(score, 'f', -1, 64))
-    p.arguments = append(p.arguments, member)
+	//SendRedisCommand(p.output, "ZADD", key, strconv.FormatFloat(score, 'f', -1, 64), member)
 }
 
 func (p *decoder) EndZSet(key []byte) {
-    SendRedisCommand(p.output, p.arguments...)
-    if (p.expiry > 0) {
-    	SendRedisCommand(p.output, "PEXPIREAT", key, strconv.FormatInt(p.expiry, 10))
-    }
-    p.arguments = nil
-    p.expiry = 0
+	if (p.expiry > 0) {
+		//SendRedisCommand(p.output, "PEXPIREAT", key, strconv.FormatInt(p.expiry, 10))
+		p.expiry = 0
+	}
 }
 
 func (p *decoder) EndRDB() {
@@ -337,5 +328,8 @@ func main() {
 	log.Printf("Redis Resharding Proxy configured for Redis master at %s:%d\n", masterHost, masterPort)
 	log.Printf("Redis Resharding Proxy configured for Redis slave at %s:%d\n", slaveHost, slavePort)
 	go RunStats()
+	go func() {
+		log.Println(http.ListenAndServe("localhost:3003", nil))
+	}()
 	RunSlaveConnection()
 }
